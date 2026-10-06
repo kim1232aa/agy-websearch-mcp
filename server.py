@@ -48,6 +48,17 @@ SCOPES = [
     "https://www.googleapis.com/auth/experimentsandconfigs"
 ]
 
+def get_user_data_dir() -> str:
+    """Return standard cross-platform user data directory."""
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(appdata, "agy-websearch-mcp")
+    elif sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/agy-websearch-mcp")
+    else:
+        xdg_data = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+        return os.path.join(xdg_data, "agy-websearch-mcp")
+
 def get_possible_cred_paths():
     paths = []
     if os.environ.get("AGY_CREDENTIALS_PATH"):
@@ -57,9 +68,13 @@ def get_possible_cred_paths():
     paths.append(os.path.join(script_dir, "credentials.json"))
     # Working directory
     paths.append(os.path.abspath("credentials.json"))
-    # Standard user share directory
+    # Standard cross-platform user data directory
+    paths.append(os.path.join(get_user_data_dir(), "credentials.json"))
+    # Additional common fallback directories
     paths.append(os.path.expanduser("~/.local/share/agy-websearch-mcp/credentials.json"))
-    # Existing agy token fallback
+    paths.append(os.path.expanduser("~/.config/agy-websearch-mcp/credentials.json"))
+    paths.append(os.path.expanduser("~/.agy-websearch-mcp/credentials.json"))
+    # Existing native agy token fallback
     paths.append(os.path.expanduser("~/.gemini/antigravity-cli/antigravity-oauth-token"))
     return paths
 
@@ -70,9 +85,9 @@ def get_save_cred_path():
     local_path = os.path.join(script_dir, "credentials.json")
     if os.path.exists(local_path):
         return local_path
-    user_share = os.path.expanduser("~/.local/share/agy-websearch-mcp")
-    os.makedirs(user_share, exist_ok=True)
-    return os.path.join(user_share, "credentials.json")
+    user_data_dir = get_user_data_dir()
+    os.makedirs(user_data_dir, exist_ok=True)
+    return os.path.join(user_data_dir, "credentials.json")
 
 class TokenManager:
     def __init__(self):
@@ -128,15 +143,43 @@ class TokenManager:
 
 token_manager = TokenManager()
 
+def get_client_platform_info():
+    """Dynamically detect operating system and architecture for upstream API headers."""
+    import platform
+    sys_name = sys.platform
+    if sys_name.startswith("linux"):
+        platform_name = "LINUX"
+        ua_platform = "linux"
+    elif sys_name == "darwin":
+        platform_name = "DARWIN"
+        ua_platform = "darwin"
+    elif sys_name == "win32":
+        platform_name = "WINDOWS"
+        ua_platform = "windows"
+    else:
+        platform_name = "LINUX"
+        ua_platform = "linux"
+
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        arch = "amd64"
+    elif machine in ("arm64", "aarch64"):
+        arch = "arm64"
+    else:
+        arch = "amd64"
+
+    return platform_name, ua_platform, arch
+
 def perform_search(query: str) -> str:
     access_token = token_manager.get_access_token()
+    platform_name, ua_platform, arch = get_client_platform_info()
 
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
-        "User-Agent": "antigravity/1.15.8 linux/amd64",
+        "User-Agent": f"antigravity/1.15.8 {ua_platform}/{arch}",
         "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
-        "Client-Metadata": '{"ideType":"ANTIGRAVITY","platform":"LINUX","pluginType":"GEMINI"}'
+        "Client-Metadata": json.dumps({"ideType": "ANTIGRAVITY", "platform": platform_name, "pluginType": "GEMINI"})
     }
 
     body = {

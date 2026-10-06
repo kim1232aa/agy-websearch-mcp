@@ -51,7 +51,7 @@ python3 server.py login
 - **本地桌面环境**：会自动调起默认浏览器，使用 Google 账号登录并确认授权，网页提示成功后终端将自动换取并保存凭据。
 - **远程服务器 / SSH 环境**：终端会输出授权 URL，在本地电脑浏览器中打开该 URL 登录，并将重定向后的最终网址粘贴回终端即可。
 
-*(凭据将安全保存在 `~/.local/share/agy-websearch-mcp/credentials.json` 或当前目录下的 `credentials.json`，且已配置 `.gitignore` 防止意外提交)*
+*(凭据将安全保存在跨平台标准用户目录（Linux: `~/.local/share/agy-websearch-mcp/credentials.json`, macOS: `~/Library/Application Support/agy-websearch-mcp/credentials.json`, Windows: `%APPDATA%\agy-websearch-mcp\credentials.json`）或当前项目目录下的 `credentials.json`，且已配置 `.gitignore` 防止意外提交)*
 
 ### 3. 命令行快速检索测试
 你可以在命令行直接测试搜索效果：
@@ -63,6 +63,8 @@ python3 server.py --search "2026年最新科技新闻"
 
 ## 🛠️ MCP 客户端接入配置 (Client Configuration)
 
+> **💡 路径提示**：请将下方配置中的 `/path/to/agy-websearch-mcp/server.py` 替换为你实际克隆的项目绝对路径（Windows 用户形如 `C:\\path\\to\\agy-websearch-mcp\\server.py`）。
+
 ### 1. Kimi Code CLI
 在 `~/.kimi-code/mcp.json` 中添加：
 ```json
@@ -70,21 +72,16 @@ python3 server.py --search "2026年最新科技新闻"
   "mcpServers": {
     "agy-search": {
       "command": "python3",
-      "args": ["/绝对路径/agy-websearch-mcp/server.py"],
-      "env": {
-        "HTTP_PROXY": "http://127.0.0.1:7896",
-        "HTTPS_PROXY": "http://127.0.0.1:7896"
-      }
+      "args": ["/path/to/agy-websearch-mcp/server.py"]
     }
   }
 }
 ```
-*(注：如果服务器在海外可直连 Google，可去除 `env` 中的代理配置)*
 
 ### 2. Claude Code
 在终端直接通过 CLI 注册：
 ```bash
-claude mcp add agy-search python3 /绝对路径/agy-websearch-mcp/server.py
+claude mcp add agy-search python3 /path/to/agy-websearch-mcp/server.py
 ```
 或在 `~/.claude.json` 中配置：
 ```json
@@ -92,7 +89,7 @@ claude mcp add agy-search python3 /绝对路径/agy-websearch-mcp/server.py
   "mcpServers": {
     "agy-search": {
       "command": "python3",
-      "args": ["/绝对路径/agy-websearch-mcp/server.py"]
+      "args": ["/path/to/agy-websearch-mcp/server.py"]
     }
   }
 }
@@ -102,7 +99,7 @@ claude mcp add agy-search python3 /绝对路径/agy-websearch-mcp/server.py
 在 Cursor 设置的 `Features` -> `MCP Servers` 中点击 `Add new MCP server`：
 - **Name**: `agy-search`
 - **Type**: `command`
-- **Command**: `python3 /绝对路径/agy-websearch-mcp/server.py`
+- **Command**: `python3 /path/to/agy-websearch-mcp/server.py`
 
 ### 4. Cline / Roo Code (VS Code Extension)
 在扩展的 MCP 设置文件 `cline_mcp_settings.json` 中添加：
@@ -111,13 +108,42 @@ claude mcp add agy-search python3 /绝对路径/agy-websearch-mcp/server.py
   "mcpServers": {
     "agy-search": {
       "command": "python3",
-      "args": ["/绝对路径/agy-websearch-mcp/server.py"],
+      "args": ["/path/to/agy-websearch-mcp/server.py"],
       "disabled": false,
       "autoApprove": ["agy_web_search"]
     }
   }
 }
 ```
+
+---
+
+## 🌐 代理与网络环境配置 (可选)
+
+本项目原生直连 Google 官方 API。如果你的网络环境无法直接访问 Google（例如处于中国大陆网络环境下），可以通过以下两种方式配置代理：
+
+### 方式一：在 MCP 客户端配置中注入代理环境变量
+以 Kimi Code / Cline 为例，在配置中添加 `env` 字段：
+```json
+{
+  "mcpServers": {
+    "agy-search": {
+      "command": "python3",
+      "args": ["/path/to/agy-websearch-mcp/server.py"],
+      "env": {
+        "HTTP_PROXY": "http://127.0.0.1:7890",
+        "HTTPS_PROXY": "http://127.0.0.1:7890"
+      }
+    }
+  }
+}
+```
+*(注：请将 `7890` 替换为你实际运行的本地代理客户端端口，如 7890、10808 等)*
+
+### 方式二：系统全局环境变量
+脚本会自动遵循操作系统的标准环境变量：
+- `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`
+- `AGY_CREDENTIALS_PATH`：手动指定凭据文件路径（可选）
 
 ---
 
@@ -132,8 +158,8 @@ claude mcp add agy-search python3 /绝对路径/agy-websearch-mcp/server.py
 1. `AGY_CREDENTIALS_PATH` 环境变量指定的位置
 2. 当前脚本同级目录 `./credentials.json`
 3. 当前执行工作目录 `credentials.json`
-4. 用户数据目录 `~/.local/share/agy-websearch-mcp/credentials.json`
-5. 本机既有 agy 缓存 `~/.gemini/antigravity-cli/antigravity-oauth-token`（如有）
+4. 跨平台标准用户目录（Linux: `~/.local/share/agy-websearch-mcp/credentials.json`，macOS: `~/Library/Application Support/agy-websearch-mcp/credentials.json`，Windows: `%APPDATA%\agy-websearch-mcp\credentials.json`）
+5. 本机既有 agy 客户端缓存 `~/.gemini/antigravity-cli/antigravity-oauth-token`（如有）
 
 ---
 
