@@ -129,7 +129,7 @@ claude mcp add agy-search python3 /path/to/agy-websearch-mcp/server.py
       "command": "python3",
       "args": ["/path/to/agy-websearch-mcp/server.py"],
       "disabled": false,
-      "autoApprove": ["agy_web_search"]
+      "autoApprove": ["search_web", "agy_web_search"]
     }
   }
 }
