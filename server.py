@@ -24,6 +24,7 @@ import urllib.error
 import http.server
 import logging
 import argparse
+import secrets
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="[%(asctime)s] %(levelname)s: %(message)s")
 
@@ -88,6 +89,35 @@ def get_save_cred_path():
     user_data_dir = get_user_data_dir()
     os.makedirs(user_data_dir, exist_ok=True)
     return os.path.join(user_data_dir, "credentials.json")
+
+def save_credentials(cred_data: dict, save_path: str):
+    """Save credentials to disk with restricted permissions (0600 file, 0700 dir on POSIX)."""
+    parent_dir = os.path.dirname(save_path)
+    if parent_dir:
+        os.makedirs(parent_dir, mode=0o700, exist_ok=True)
+        if hasattr(os, "chmod"):
+            try:
+                os.chmod(parent_dir, 0o700)
+            except Exception:
+                pass
+
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    try:
+        fd = os.open(save_path, flags, 0o600)
+        with open(fd, "w", encoding="utf-8") as f:
+            json.dump(cred_data, f, indent=2)
+    except Exception:
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(cred_data, f, indent=2)
+
+    if hasattr(os, "chmod"):
+        try:
+            os.chmod(save_path, 0o600)
+        except Exception:
+            pass
 
 class TokenManager:
     def __init__(self):
@@ -170,8 +200,17 @@ def get_client_platform_info():
 
     return platform_name, ua_platform, arch
 
-def perform_search(query: str, domain: str = None) -> str:
-    access_token = token_manager.get_access_token()
+def perform_search(query: str, domain: str = None) -> tuple[str, bool]:
+    """Execute search using Google CloudCode PA Grounding API. Returns (result_text, is_error)."""
+    if not query or not str(query).strip():
+        return "Error: Search query cannot be empty.", True
+    query = str(query).strip()
+
+    try:
+        access_token = token_manager.get_access_token()
+    except Exception as e:
+        return f"Error: Unable to acquire Google OAuth access token ({e}). Run `python3 server.py login` to authenticate.", True
+
     platform_name, ua_platform, arch = get_client_platform_info()
 
     headers = {
@@ -185,10 +224,12 @@ def perform_search(query: str, domain: str = None) -> str:
     gs_config = {}
     if domain:
         clean_domain = str(domain).strip().lower()
-        for prefix in ("https://", "http://", "www."):
-            if clean_domain.startswith(prefix):
-                clean_domain = clean_domain[len(prefix):]
-        clean_domain = clean_domain.split("/")[0]
+        if "://" in clean_domain:
+            clean_domain = urllib.parse.urlparse(clean_domain).netloc or clean_domain
+        else:
+            clean_domain = clean_domain.split("/")[0]
+        if clean_domain.startswith("www."):
+            clean_domain = clean_domain[4:]
         if clean_domain:
             gs_config["includedDomains"] = [clean_domain]
 
@@ -214,14 +255,14 @@ def perform_search(query: str, domain: str = None) -> str:
             resp_data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode("utf-8", errors="replace")
-        return f"Error executing Google Grounding Search: HTTP {e.code} - {err_msg}"
+        return f"Error executing Google Grounding Search: HTTP {e.code} - {err_msg}", True
     except Exception as e:
-        return f"Error executing Google Grounding Search: {str(e)}"
+        return f"Error executing Google Grounding Search: {str(e)}", True
 
     # Parse response
     candidates = resp_data.get("response", {}).get("candidates", [])
     if not candidates:
-        return "No results returned by Google Grounding."
+        return "No results returned by Google Grounding.", False
 
     candidate = candidates[0]
     parts = candidate.get("content", {}).get("parts", [])
@@ -252,7 +293,7 @@ def perform_search(query: str, domain: str = None) -> str:
     if web_queries:
         out_parts.append(f"\n*Google 执行查询: {', '.join(web_queries)}*")
 
-    return "\n\n".join(out_parts)
+    return "\n\n".join(out_parts), False
 
 # Automated OAuth Login Flow
 def run_oauth_flow():
@@ -267,13 +308,15 @@ def run_oauth_flow():
     sock.close()
 
     redirect_uri = f"http://localhost:{port}/auth/callback"
+    state = secrets.token_urlsafe(16)
     auth_params = {
         "client_id": CLIENT_ID,
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": " ".join(SCOPES),
         "access_type": "offline",
-        "prompt": "consent"
+        "prompt": "consent",
+        "state": state
     }
     login_url = f"{AUTH_URL}?{urllib.parse.urlencode(auth_params)}"
 
@@ -287,6 +330,21 @@ def run_oauth_flow():
             parsed = urllib.parse.urlparse(self.path)
             if parsed.path == "/auth/callback":
                 qs = urllib.parse.parse_qs(parsed.query)
+                if "error" in qs:
+                    err_code = qs.get("error", ["unknown"])[0]
+                    self.send_response(400)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(f"<html><body><h2>授权失败或被拒绝: {err_code}</h2></body></html>".encode("utf-8"))
+                    threading.Thread(target=auth_code_holder["server"].shutdown).start()
+                    return
+                recv_state = qs.get("state", [""])[0]
+                if recv_state != state:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write("<html><body><h2>CSRF 校验失败: state 不匹配</h2></body></html>".encode("utf-8"))
+                    return
                 if "code" in qs:
                     auth_code_holder["code"] = qs["code"][0]
                     self.send_response(200)
@@ -386,8 +444,7 @@ def run_oauth_flow():
         "refresh_token": refresh_token,
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
     }
-    with open(save_path, "w", encoding="utf-8") as f:
-        json.dump(cred_data, f, indent=2)
+    save_credentials(cred_data, save_path)
 
     print("=" * 72)
     print(" 恭喜！授权配置成功！")
@@ -402,11 +459,30 @@ def handle_request(line: str):
     try:
         msg = json.loads(line)
     except Exception:
+        send_response({
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {
+                "code": -32700,
+                "message": "Parse error: Invalid JSON payload."
+            }
+        })
+        return
+
+    if not isinstance(msg, dict):
+        send_response({
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {
+                "code": -32600,
+                "message": "Invalid Request: Expected a JSON object."
+            }
+        })
         return
 
     msg_id = msg.get("id")
     method = msg.get("method")
-    params = msg.get("params", {})
+    params = msg.get("params") or {}
 
     if method == "initialize":
         response = {
@@ -472,12 +548,16 @@ def handle_request(line: str):
         send_response(response)
     elif method == "tools/call":
         tool_name = params.get("name")
-        args = params.get("arguments", {})
+        args = params.get("arguments") or {}
         if tool_name in ("search_web", "agy_web_search"):
             query = args.get("query", "")
             domain = args.get("domain", None)
             logging.info(f"Received search query: {query!r}, domain: {domain!r}")
-            search_result = perform_search(query, domain=domain)
+            try:
+                search_result, is_error = perform_search(query, domain=domain)
+            except Exception as e:
+                search_result, is_error = f"Internal server error: {e}", True
+
             response = {
                 "jsonrpc": "2.0",
                 "id": msg_id,
@@ -488,7 +568,7 @@ def handle_request(line: str):
                             "text": search_result
                         }
                     ],
-                    "isError": False
+                    "isError": is_error
                 }
             }
             send_response(response)
@@ -502,6 +582,15 @@ def handle_request(line: str):
                 }
             }
             send_response(response)
+    elif msg_id is not None:
+        send_response({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {
+                "code": -32601,
+                "message": f"Method not found: {method}"
+            }
+        })
 
 def send_response(res):
     output = json.dumps(res, ensure_ascii=False)
@@ -509,6 +598,13 @@ def send_response(res):
     sys.stdout.flush()
 
 def main():
+    if hasattr(sys.stdin, "reconfigure"):
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(description="agy-websearch-mcp: Ultra-lightweight Google Search Grounding MCP Server")
     parser.add_argument("command", nargs="?", choices=["login", "auth"], help="Run automated OAuth login flow")
     parser.add_argument("--search", type=str, help="Execute a quick test search from command line")
@@ -523,7 +619,7 @@ def main():
 
     if args.search:
         print(f"Searching: {args.search} (domain: {args.domain})\n")
-        res = perform_search(args.search, domain=args.domain)
+        res, _ = perform_search(args.search, domain=args.domain)
         print(res)
         return
 
