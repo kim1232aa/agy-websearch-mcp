@@ -170,7 +170,7 @@ def get_client_platform_info():
 
     return platform_name, ua_platform, arch
 
-def perform_search(query: str) -> str:
+def perform_search(query: str, domain: str = None) -> str:
     access_token = token_manager.get_access_token()
     platform_name, ua_platform, arch = get_client_platform_info()
 
@@ -182,6 +182,16 @@ def perform_search(query: str) -> str:
         "Client-Metadata": json.dumps({"ideType": "ANTIGRAVITY", "platform": platform_name, "pluginType": "GEMINI"})
     }
 
+    gs_config = {}
+    if domain:
+        clean_domain = str(domain).strip().lower()
+        for prefix in ("https://", "http://", "www."):
+            if clean_domain.startswith(prefix):
+                clean_domain = clean_domain[len(prefix):]
+        clean_domain = clean_domain.split("/")[0]
+        if clean_domain:
+            gs_config["includedDomains"] = [clean_domain]
+
     body = {
         "project": "aicode-consumers",
         "model": "gemini-2.5-flash",
@@ -192,7 +202,7 @@ def perform_search(query: str) -> str:
                     "parts": [{"text": query}]
                 }
             ],
-            "tools": [{"googleSearch": {}}]
+            "tools": [{"googleSearch": gs_config}]
         }
     }
 
@@ -419,24 +429,42 @@ def handle_request(line: str):
     elif method == "ping":
         send_response({"jsonrpc": "2.0", "id": msg_id, "result": {}})
     elif method == "tools/list":
+        search_schema = {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词或查询语句 (Search query or research question)."
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "可选。建议搜索优先检索或限定的目标域名 (Optional target domain to prioritize, e.g. 'docs.python.org', 'github.com')."
+                },
+                "toolAction": {
+                    "type": "string",
+                    "description": "描述该操作的简短动名词短语 (e.g. 'Searching the web')."
+                },
+                "toolSummary": {
+                    "type": "string",
+                    "description": "描述该任务的简短名词短语 (e.g. 'Web search')."
+                }
+            },
+            "required": ["query"]
+        }
         response = {
             "jsonrpc": "2.0",
             "id": msg_id,
             "result": {
                 "tools": [
                     {
+                        "name": "search_web",
+                        "description": "Perform a real-time web search powered by Google Search Grounding with authoritative citations, fresh results, and direct source URLs.",
+                        "inputSchema": search_schema
+                    },
+                    {
                         "name": "agy_web_search",
-                        "description": "Powerful real-time web search powered by Google Search Grounding with authoritative citations, fresh results, and direct source URLs.",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "The search query or research question to search on Google."
-                                }
-                            },
-                            "required": ["query"]
-                        }
+                        "description": "Alias for search_web. Powerful real-time web search powered by Google Search Grounding.",
+                        "inputSchema": search_schema
                     }
                 ]
             }
@@ -445,10 +473,11 @@ def handle_request(line: str):
     elif method == "tools/call":
         tool_name = params.get("name")
         args = params.get("arguments", {})
-        if tool_name == "agy_web_search":
+        if tool_name in ("search_web", "agy_web_search"):
             query = args.get("query", "")
-            logging.info(f"Received search query: {query}")
-            search_result = perform_search(query)
+            domain = args.get("domain", None)
+            logging.info(f"Received search query: {query!r}, domain: {domain!r}")
+            search_result = perform_search(query, domain=domain)
             response = {
                 "jsonrpc": "2.0",
                 "id": msg_id,
@@ -483,6 +512,7 @@ def main():
     parser = argparse.ArgumentParser(description="agy-websearch-mcp: Ultra-lightweight Google Search Grounding MCP Server")
     parser.add_argument("command", nargs="?", choices=["login", "auth"], help="Run automated OAuth login flow")
     parser.add_argument("--search", type=str, help="Execute a quick test search from command line")
+    parser.add_argument("--domain", type=str, help="Optional domain filter (e.g. 'python.org')")
     parser.add_argument("--login", action="store_true", help="Run automated OAuth login flow")
 
     args, unknown = parser.parse_known_args()
@@ -492,8 +522,8 @@ def main():
         return
 
     if args.search:
-        print(f"Searching: {args.search}\n")
-        res = perform_search(args.search)
+        print(f"Searching: {args.search} (domain: {args.domain})\n")
+        res = perform_search(args.search, domain=args.domain)
         print(res)
         return
 

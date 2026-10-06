@@ -54,10 +54,29 @@ python3 server.py login
 *(凭据将安全保存在跨平台标准用户目录（Linux: `~/.local/share/agy-websearch-mcp/credentials.json`, macOS: `~/Library/Application Support/agy-websearch-mcp/credentials.json`, Windows: `%APPDATA%\agy-websearch-mcp\credentials.json`）或当前项目目录下的 `credentials.json`，且已配置 `.gitignore` 防止意外提交)*
 
 ### 3. 命令行快速检索测试
-你可以在命令行直接测试搜索效果：
+你可以在命令行直接测试搜索效果（支持通过 `--domain` 限定域名）：
 ```bash
 python3 server.py --search "2026年最新科技新闻"
+python3 server.py --search "Python downloads" --domain "python.org"
 ```
+
+---
+
+## 🧩 工具定义与入参 (Tool Schema)
+
+本 MCP 服务对齐了 `agy` 原版内置的搜索工具形态，注册并提供以下工具：
+
+- **`search_web`**（推荐，原版标准命名）
+- **`agy_web_search`**（全兼容别名）
+
+### 入参 Schema
+
+| 参数字段 | 类型 | 必填 | 作用与说明 |
+| :--- | :--- | :---: | :--- |
+| **`query`** | `string` | **是** | 核心检索词。支持 Google 高级检索语法（如 `site:`, `filetype:`, 双引号等）。 |
+| **`domain`** | `string` | 否 | **域名限定/优先**。例如 `python.org` 或 `docs.rs`，原生映射为 Google 上游的 `includedDomains` 过滤。 |
+| **`toolAction`** | `string` | 否 | 原版 Agent 动作描述元数据（如 `'Searching the web'`）。 |
+| **`toolSummary`** | `string` | 否 | 原版 Agent 任务分类摘要元数据（如 `'Web search'`）。 |
 
 ---
 
