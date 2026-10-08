@@ -58,6 +58,8 @@ python3 server.py login
 ```bash
 python3 server.py --search "2026年最新科技新闻"
 python3 server.py --search "Python downloads" --domain "python.org"
+python3 server.py --engine grok --search "gold price today"
+python3 server.py --engine codex --search "silver price today"
 ```
 
 ---
@@ -77,6 +79,7 @@ python3 server.py --search "Python downloads" --domain "python.org"
 | **`domain`** | `string` | 否 | **域名限定/优先**。例如 `python.org` 或 `docs.rs`，原生映射为 Google 上游的 `includedDomains` 过滤。 |
 | **`toolAction`** | `string` | 否 | 原版 Agent 动作描述元数据（如 `'Searching the web'`）。 |
 | **`toolSummary`** | `string` | 否 | 原版 Agent 任务分类摘要元数据（如 `'Web search'`）。 |
+| **`engine`** | `string` | 否 | 搜索引擎：`google`（默认，Gemini Grounding）、`grok`（xAI `web_search`）、`codex`（OpenAI Responses `web_search`）。 |
 
 ---
 

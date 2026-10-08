@@ -295,6 +295,254 @@ def perform_search(query: str, domain: str = None) -> tuple[str, bool]:
 
     return "\n\n".join(out_parts), False
 
+
+def _clean_domain(domain):
+    if not domain:
+        return None
+    clean = str(domain).strip().lower()
+    if "://" in clean:
+        clean = urllib.parse.urlparse(clean).netloc or clean
+    else:
+        clean = clean.split("/")[0]
+    if clean.startswith("www."):
+        clean = clean[4:]
+    return clean or None
+
+
+def _format_search(engine, text, sources, queries):
+    parts = []
+    if text:
+        parts.append(text.strip())
+    seen = set()
+    lines = []
+    for title, uri in sources:
+        if not uri or uri in seen:
+            continue
+        seen.add(uri)
+        lines.append(f"- [{title or uri}]({uri})")
+    if lines:
+        parts.append("\n### 权威溯源链接 (Sources)\n\n" + "\n".join(lines))
+    if queries:
+        parts.append(f"\n*{engine} 执行查询: {', '.join(queries)}*")
+    return "\n\n".join(parts) if parts else f"No results returned by {engine}."
+
+
+def _post_json(url, body, headers, timeout=45):
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8")), None
+    except urllib.error.HTTPError as e:
+        return None, f"HTTP {e.code} - {e.read().decode('utf-8', 'replace')[:400]}"
+    except Exception as e:
+        return None, str(e)
+
+
+def _toml_value(path, key):
+    if not os.path.exists(path):
+        return None
+    prefix = key + " ="
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped.startswith(prefix):
+                    return stripped.split("=", 1)[1].strip().strip('"').strip("'")
+    except Exception:
+        return None
+    return None
+
+
+class GrokToken:
+    def __init__(self):
+        self.access_token = None
+        self.expires_at = 0
+
+    def get(self):
+        if self.access_token and time.time() < self.expires_at - 60:
+            return self.access_token
+        path = os.path.expanduser("~/.grok/auth.json")
+        if not os.path.exists(path):
+            raise RuntimeError("no ~/.grok/auth.json; log in with the grok CLI first")
+        with open(path, "r", encoding="utf-8") as f:
+            entry = next(iter(json.load(f).values()))
+        client_id = entry.get("oidc_client_id")
+        refresh_token = entry.get("refresh_token")
+        if not client_id or not refresh_token:
+            raise RuntimeError("grok auth.json has no refresh_token")
+        payload = urllib.parse.urlencode({
+            "grant_type": "refresh_token",
+            "client_id": client_id,
+            "refresh_token": refresh_token,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://auth.x.ai/oauth2/token",
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        self.access_token = result["access_token"]
+        self.expires_at = time.time() + int(result.get("expires_in") or 3600)
+        return self.access_token
+
+
+grok_token = GrokToken()
+
+
+def perform_grok_search(query, domain=None):
+    try:
+        token = grok_token.get()
+    except Exception as e:
+        return f"Error: Grok auth failed ({e}).", True
+    text = query
+    clean = _clean_domain(domain)
+    if clean:
+        text = f"{query}\n\nOnly use sources from: {clean}."
+    body = {
+        "model": os.environ.get("GROK_SEARCH_MODEL", "grok-4.5"),
+        "input": text,
+        "tools": [{"type": "web_search"}],
+        "max_output_tokens": 800,
+    }
+    data, err = _post_json(
+        "https://api.x.ai/v1/responses",
+        body,
+        {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    if err:
+        return f"Error executing Grok search: {err}", True
+    texts, sources, queries = [], [], []
+    for item in data.get("output") or []:
+        kind = item.get("type")
+        if kind == "web_search_call":
+            action = item.get("action") or {}
+            q = action.get("query")
+            if q:
+                queries.append(q)
+            for source in action.get("sources") or []:
+                if isinstance(source, dict) and source.get("url"):
+                    sources.append((source.get("title") or source["url"], source["url"]))
+        elif kind == "message":
+            for part in item.get("content") or []:
+                if part.get("text"):
+                    texts.append(part["text"])
+                for ann in part.get("annotations") or []:
+                    if ann.get("type") == "url_citation" and ann.get("url"):
+                        sources.append((ann.get("title") or ann["url"], ann["url"]))
+    return _format_search("Grok", "\n".join(texts), sources, queries), False
+
+
+def _codex_config():
+    key = os.environ.get("CODEX_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    base = os.environ.get("CODEX_BASE_URL")
+    if not key:
+        kimi = os.path.expanduser("~/.kimi-code/config.toml")
+        if os.path.exists(kimi):
+            in_sub = False
+            try:
+                with open(kimi, "r", encoding="utf-8") as f:
+                    for line in f:
+                        stripped = line.strip()
+                        if stripped.startswith("[") and stripped.endswith("]"):
+                            in_sub = stripped == "[providers.sub]"
+                            continue
+                        if in_sub and stripped.startswith("api_key"):
+                            key = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+                            break
+            except Exception:
+                key = None
+    if not key:
+        auth_path = os.path.expanduser("~/.codex/auth.json")
+        if os.path.exists(auth_path):
+            try:
+                with open(auth_path, "r", encoding="utf-8") as f:
+                    key = json.load(f).get("OPENAI_API_KEY")
+            except Exception:
+                key = None
+    if not base:
+        kimi = os.path.expanduser("~/.kimi-code/config.toml")
+        if os.path.exists(kimi):
+            in_sub = False
+            try:
+                with open(kimi, "r", encoding="utf-8") as f:
+                    for line in f:
+                        stripped = line.strip()
+                        if stripped.startswith("[") and stripped.endswith("]"):
+                            in_sub = stripped == "[providers.sub]"
+                            continue
+                        if in_sub and stripped.startswith("base_url"):
+                            raw = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+                            marker = "/bili/"
+                            base = raw.split(marker, 1)[1] if marker in raw else raw
+                            break
+            except Exception:
+                base = None
+    if not base:
+        base = _toml_value(os.path.expanduser("~/.codex/config.toml"), "openai_base_url") or "https://api.openai.com/v1"
+    return key, base.rstrip("/")
+
+
+def perform_codex_search(query, domain=None):
+    key, base = _codex_config()
+    if not key:
+        return "Error: no Codex/OpenAI key in CODEX_API_KEY, OPENAI_API_KEY, or ~/.codex/auth.json.", True
+    text = query
+    clean = _clean_domain(domain)
+    if clean:
+        text = f"{query}\n\nOnly cite sources from {clean}."
+    body = {
+        "model": os.environ.get("CODEX_SEARCH_MODEL", "gpt-6-luna"),
+        "input": text,
+        "tools": [{"type": "web_search"}],
+        "max_output_tokens": 800,
+        "store": False,
+    }
+    data, err = _post_json(
+        base + "/responses",
+        body,
+        {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
+    if err:
+        return f"Error executing Codex search: {err}", True
+    texts, sources, queries = [], [], []
+    for item in data.get("output") or []:
+        kind = item.get("type")
+        if kind == "web_search_call":
+            action = item.get("action") or {}
+            for q in action.get("queries") or []:
+                queries.append(q)
+            if action.get("query"):
+                queries.append(action["query"])
+            for source in action.get("sources") or []:
+                if isinstance(source, dict) and source.get("url"):
+                    sources.append((source.get("title") or source["url"], source["url"]))
+        elif kind == "message":
+            for part in item.get("content") or []:
+                if part.get("text"):
+                    texts.append(part["text"])
+                for ann in part.get("annotations") or []:
+                    if ann.get("type") == "url_citation" and ann.get("url"):
+                        sources.append((ann.get("title") or ann["url"], ann["url"]))
+    return _format_search("Codex", "\n".join(texts), sources, queries), False
+
+
+ENGINES = {
+    "google": perform_search,
+    "grok": perform_grok_search,
+    "codex": perform_codex_search,
+}
+
+
+def perform_engine_search(query, domain=None, engine="google"):
+    fn = ENGINES.get((engine or "google").strip().lower())
+    if not fn:
+        return f"Error: unknown engine {engine!r}. Use google, grok, or codex.", True
+    return fn(query, domain)
+
+
 # Automated OAuth Login Flow
 def run_oauth_flow():
     print("=" * 72)
@@ -523,6 +771,10 @@ def handle_request(line: str):
                 "toolSummary": {
                     "type": "string",
                     "description": "描述该任务的简短名词短语 (e.g. 'Web search')."
+                },
+                "engine": {
+                    "type": "string",
+                    "description": "Search engine: google (default, Gemini Grounding), grok (xAI web_search), or codex (OpenAI Responses web_search)."
                 }
             },
             "required": ["query"]
@@ -552,9 +804,10 @@ def handle_request(line: str):
         if tool_name in ("search_web", "agy_web_search"):
             query = args.get("query", "")
             domain = args.get("domain", None)
-            logging.info(f"Received search query: {query!r}, domain: {domain!r}")
+            engine = args.get("engine", "google")
+            logging.info(f"Received search query: {query!r}, domain: {domain!r}, engine: {engine!r}")
             try:
-                search_result, is_error = perform_search(query, domain=domain)
+                search_result, is_error = perform_engine_search(query, domain=domain, engine=engine)
             except Exception as e:
                 search_result, is_error = f"Internal server error: {e}", True
 
@@ -609,6 +862,7 @@ def main():
     parser.add_argument("command", nargs="?", choices=["login", "auth"], help="Run automated OAuth login flow")
     parser.add_argument("--search", type=str, help="Execute a quick test search from command line")
     parser.add_argument("--domain", type=str, help="Optional domain filter (e.g. 'python.org')")
+    parser.add_argument("--engine", type=str, default="google", help="google, grok, or codex")
     parser.add_argument("--login", action="store_true", help="Run automated OAuth login flow")
 
     args, unknown = parser.parse_known_args()
@@ -618,8 +872,8 @@ def main():
         return
 
     if args.search:
-        print(f"Searching: {args.search} (domain: {args.domain})\n")
-        res, _ = perform_search(args.search, domain=args.domain)
+        print(f"Searching: {args.search} (domain: {args.domain}, engine: {args.engine})\n")
+        res, _ = perform_engine_search(args.search, domain=args.domain, engine=args.engine)
         print(res)
         return
 
