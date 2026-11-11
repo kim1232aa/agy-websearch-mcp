@@ -192,7 +192,7 @@ curl -s http://127.0.0.1:8765/search \
 
 **安全默认值**
 - 未配置 Token 时拒绝启动；`--no-auth` 只允许配合回环地址使用。Token 支持 `Authorization: Bearer` 或 `X-API-Key`，使用常量时间比较。
-- 默认只监听 `127.0.0.1`；按客户端 IP 限流（`--rate-limit`，默认 30 次/分钟）、上游并发上限（`--max-concurrency`，默认 4）、请求体上限（`--max-body`，默认 16KB）、连接超时 30 秒。
+- 默认只监听 `127.0.0.1`；按客户端 IP 限流（`--rate-limit`，**默认关闭**，设为 N 表示每 IP 每分钟 N 次）、上游并发上限（`--max-concurrency`，默认 4）、请求体上限（`--max-body`，默认 16KB）、连接超时 30 秒。
 - 默认只开放 `google` 引擎（`--engines google,grok,codex` 可显式开放更多），客户端无法指定上游地址。注意：开放 `codex`/`grok` 后，持有 API Token 的调用方会消耗对应账号（例如 ChatGPT 订阅）的额度。
 - 仅当前面确实有反向代理时才加 `--trust-proxy`，此时才使用 `X-Real-IP` / `X-Forwarded-For` 做限流与日志；日志只记录查询长度，不记录查询内容和 Token。
 - 对公网暴露时请务必使用 HTTPS，并把 Token 存放在仓库之外（例如 systemd `EnvironmentFile` 或 `--token-file`）。

@@ -1560,7 +1560,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     http_group.add_argument("--engines", default="google",
                             help="Comma-separated engines exposed over HTTP; the first is the default (default: google)")
     http_group.add_argument("--max-concurrency", type=int, default=4, help="Concurrent upstream searches (default 4)")
-    http_group.add_argument("--rate-limit", type=int, default=30, help="Requests per minute per client IP, 0 = off (default 30)")
+    http_group.add_argument("--rate-limit", type=int, default=0, help="Requests per minute per client IP, 0 = off (default: off)")
     http_group.add_argument("--max-body", type=int, default=16 * 1024, help="Max request body bytes (default 16384)")
     http_group.add_argument("--trust-proxy", action="store_true",
                             help="Trust X-Real-IP / X-Forwarded-For from the reverse proxy for rate limiting and logs")
