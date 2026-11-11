@@ -29,14 +29,11 @@ Ultra-lightweight Model Context Protocol (MCP) server providing Google Search Gr
 - **Tests** (offline): `python3 -m unittest discover -s tests -v`
 
 ## MCP Tools
-1. `search_web` (Primary, aligned with native `agy` tool definition):
+1. `search_web`:
    - `query` (`string`, required): Search keyword or question. Supports standard Google operators.
    - `domain` (`string`, optional): Target domain to prioritize or filter (mapped upstream to `includedDomains`).
-   - `max_results` (`integer`, optional, 0-20, default 10): Max source links.
    - `engine` (`google` | `grok` | `codex`, optional, default `google`).
-   - `toolAction` / `toolSummary` (`string`, optional): Agent metadata, ignored.
    - Returns Markdown text only (no `structuredContent`, to avoid clients rendering results twice); invalid params / unknown tool → JSON-RPC `-32602`; upstream failures → `isError: true`.
-2. `agy_web_search` (Deprecated alias kept for backwards compatibility with previous configurations).
 
 ## Architecture
 - Each engine is `search_<engine>(query, domains, max_results) -> dict` and raises `SearchError(message, kind)`; register it in `ENGINES`.

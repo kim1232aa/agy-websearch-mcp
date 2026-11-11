@@ -69,27 +69,23 @@ python3 server.py --search "Python 3.13 release date" --max-results 3 --json   #
 
 ## 🧩 工具定义与入参 (Tool Schema)
 
-本 MCP 服务对齐了 `agy` 原版内置的搜索工具形态，注册并提供以下工具：
+本 MCP 服务严格对齐标准搜索工具形态，对外暴露单一明确的搜索工具，避免下游模型产生混淆或误判：
 
-- **`search_web`**（推荐，原版标准命名）
-- **`agy_web_search`**（已弃用的兼容别名，仅为不破坏旧配置而保留，新配置请使用 `search_web`）
+- **`search_web`**：标准网页搜索工具，集成 Google Grounding、xAI Grok 与 OpenAI Codex 检索能力。
 
 ### 入参 Schema
 
 | 参数字段 | 类型 | 必填 | 作用与说明 |
 | :--- | :--- | :---: | :--- |
 | **`query`** | `string` | **是** | 核心检索词。支持 Google 高级检索语法（如 `site:`, `filetype:`, 双引号等）。 |
-| **`domain`** | `string` | 否 | **域名优先**。例如 `python.org` 或 `docs.rs`，映射为 Google 上游的 `includedDomains`。实测该参数是"优先"而非严格过滤，结果中仍可能出现其他域名。 |
-| **`max_results`** | `integer` | 否 | 返回的来源链接数量上限，0–20，默认 10。 |
+| **`domain`** | `string` | 否 | **域名限定/优先**。例如 `python.org` 或 `docs.rs`，映射为 Google 上游的 `includedDomains`。 |
 | **`engine`** | `string` | 否 | 搜索引擎：`google`（默认，Gemini Grounding）、`grok`（xAI `web_search`）、`codex`（OpenAI Responses `web_search`）。 |
-| **`toolAction`** | `string` | 否 | 原版 Agent 动作描述元数据（如 `'Searching the web'`），服务端忽略。 |
-| **`toolSummary`** | `string` | 否 | 原版 Agent 任务分类摘要元数据（如 `'Web search'`），服务端忽略。 |
 
 ### 返回内容
 
 - `content[0].text`：Markdown 文本（答复 + `### 权威溯源链接 (Sources)` + 实际执行的搜索词）。
-- 不返回 `structuredContent`（部分客户端会把它与文本一起展示，导致 token 翻倍）；需要结构化数据请用 HTTP API 或 `--search ... --json`。
-- 参数非法 / 未知工具：JSON-RPC 错误 `-32602`；上游搜索失败：`isError: true` 的工具结果。
+- 不在 MCP 结果中返回冗余的 `structuredContent`（避免部分客户端重复展示导致上下文浪费）；需要结构化 JSON 数据可使用 Tavily HTTP API 或 CLI `--search ... --json`。
+- 参数非法 / 未知工具：返回标准 JSON-RPC 错误 `-32602`；上游搜索失败：返回标记为 `isError: true` 的工具结果供 Agent 正常容错。
 
 > **关于来源链接**：Google Grounding 返回的 `url` 是 `vertexaisearch.cloud.google.com/grounding-api-redirect/...` 跳转链接，`title` 通常只是域名；`content` 来自 `groundingSupports`，是**模型答复中由该来源支撑的片段**，不是网页原文摘录；`score` 为该来源被引用的占比。
 
@@ -157,7 +153,7 @@ claude mcp add agy-search python3 /path/to/agy-websearch-mcp/server.py
       "command": "python3",
       "args": ["/path/to/agy-websearch-mcp/server.py"],
       "disabled": false,
-      "autoApprove": ["search_web", "agy_web_search"]
+      "autoApprove": ["search_web"]
     }
   }
 }

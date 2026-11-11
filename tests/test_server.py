@@ -155,8 +155,14 @@ class McpProtocolTests(unittest.TestCase):
 
     def test_tools_list(self):
         tools = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]
-        self.assertEqual([t["name"] for t in tools], ["search_web", "agy_web_search"])
-        self.assertEqual(tools[0]["inputSchema"]["properties"]["engine"]["enum"], ["google", "grok", "codex"])
+        self.assertEqual([t["name"] for t in tools], ["search_web"])
+        props = tools[0]["inputSchema"]["properties"]
+        self.assertEqual(props["engine"]["enum"], ["google", "grok", "codex"])
+        self.assertIn("query", props)
+        self.assertIn("domain", props)
+        self.assertNotIn("toolAction", props)
+        self.assertNotIn("toolSummary", props)
+        self.assertNotIn("agy_web_search", [t["name"] for t in tools])
 
     def test_tools_call_success_and_upstream_error(self):
         res = self.rpc({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
@@ -165,9 +171,14 @@ class McpProtocolTests(unittest.TestCase):
         self.assertNotIn("structuredContent", res)
         self.assertIn("answer for hi", res["content"][0]["text"])
 
+        # Unknown tool (agy_web_search alias removed)
+        err = self.rpc({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
+                        "params": {"name": "agy_web_search", "arguments": {"query": "hi"}}})
+        self.assertEqual(err["error"]["code"], -32602)
+
         server.ENGINES["google"] = failing_engine
-        res = self.rpc({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
-                        "params": {"name": "agy_web_search", "arguments": {"query": "hi"}}})["result"]
+        res = self.rpc({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                        "params": {"name": "search_web", "arguments": {"query": "hi"}}})["result"]
         self.assertTrue(res["isError"])
         self.assertIn("upstream exploded", res["content"][0]["text"])
 

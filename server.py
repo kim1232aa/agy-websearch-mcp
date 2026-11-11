@@ -1040,21 +1040,12 @@ SEARCH_INPUT_SCHEMA = {
             "type": "string",
             "description": "可选。优先/限定的目标域名 (Optional domain to prioritize, e.g. 'docs.python.org', 'github.com').",
         },
-        "max_results": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": MAX_RESULTS_LIMIT,
-            "default": DEFAULT_MAX_RESULTS,
-            "description": "Maximum number of source links to return.",
-        },
         "engine": {
             "type": "string",
             "enum": list(ENGINES),
             "default": "google",
-            "description": "Search engine: google (Gemini Grounding, default), grok (xAI web_search), codex (OpenAI / ChatGPT Codex web_search).",
+            "description": "搜索引擎：'google'（默认，Gemini Grounding）、'grok'（xAI web_search）、'codex'（OpenAI Responses web_search）。",
         },
-        "toolAction": {"type": "string", "description": "Agent status metadata, ignored by the server (e.g. 'Searching the web')."},
-        "toolSummary": {"type": "string", "description": "Agent task metadata, ignored by the server (e.g. 'Web search')."},
     },
     "required": ["query"],
 }
@@ -1063,11 +1054,6 @@ MCP_TOOLS = [
     {
         "name": "search_web",
         "description": "Perform a real-time web search powered by Google Search Grounding with authoritative citations, fresh results, and direct source URLs.",
-        "inputSchema": SEARCH_INPUT_SCHEMA,
-    },
-    {
-        "name": "agy_web_search",
-        "description": "Deprecated alias of search_web, kept for backwards compatibility with older configurations. Prefer search_web.",
         "inputSchema": SEARCH_INPUT_SCHEMA,
     },
 ]
